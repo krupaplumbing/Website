@@ -578,24 +578,17 @@
   emailjs.init("KhsgQcIJjaq83Ac8M");
 
   let chatOpen = false;
-  let conversationHistory = [];
+  let step = 0;
   let bookingData = {};
+  let started = false;
 
-  const SYSTEM_PROMPT = `You are a friendly booking assistant for Krupa Plumbing, a professional plumbing company in London, Ontario. Your job is to help customers book appointments.
-
-Services offered: Bathroom & Kitchen plumbing, Pipe Installation, Drain Cleaning, Sump-Pump Installations.
-
-Your goal is to collect the following information step by step in a natural, conversational way:
-1. Customer's full name
-2. Phone number
-3. Which service they need
-4. Preferred date and time
-5. Brief description of the job
-
-Once you have all 5 pieces of information, respond with a JSON block at the end of your message in this exact format (on its own line):
-BOOKING_COMPLETE:{"name":"...","phone":"...","service":"...","date":"...","message":"..."}
-
-Keep responses short and friendly. If the user asks about pricing, say you'll have someone follow up with a quote. Always stay on topic.`;
+  const steps = [
+    { key: 'name',    question: "What's your full name?",                                          quickReplies: [] },
+    { key: 'phone',   question: "Great! What's the best phone number to reach you?",               quickReplies: [] },
+    { key: 'service', question: "Which service do you need?",                                      quickReplies: ["Bathroom & Kitchen", "Pipe Installation", "Drain Cleaning", "Sump-Pump Installation"] },
+    { key: 'date',    question: "What date and time works best for you?",                          quickReplies: ["ASAP", "This week", "Next week"] },
+    { key: 'message', question: "Can you briefly describe the job? (e.g. leaky faucet, new sink)", quickReplies: [] },
+  ];
 
   function toggleChat() {
     chatOpen = !chatOpen;
@@ -603,9 +596,20 @@ Keep responses short and friendly. If the user asks about pricing, say you'll ha
     const bubble = document.getElementById('chat-bubble');
     win.classList.toggle('open', chatOpen);
     bubble.textContent = chatOpen ? '✕' : '💬';
-    if (chatOpen && conversationHistory.length === 0) {
-      setTimeout(() => addBotMessage("Hi there! 👋 I'm here to help you book an appointment with Krupa Plumbing. What's your name?"), 400);
+    if (chatOpen && !started) {
+      started = true;
+      setTimeout(() => {
+        addBotMessage("Hi there! 👋 I'm here to help you book an appointment with Krupa Plumbing.");
+        setTimeout(() => askStep(), 800);
+      }, 400);
     }
+  }
+
+  function askStep() {
+    if (step >= steps.length) return;
+    const s = steps[step];
+    addBotMessage(s.question);
+    if (s.quickReplies.length > 0) setQuickReplies(s.quickReplies);
   }
 
   function addBotMessage(text) {
@@ -652,7 +656,7 @@ Keep responses short and friendly. If the user asks about pricing, say you'll ha
     });
   }
 
-  async function sendMessage() {
+  function sendMessage() {
     const input = document.getElementById('chat-input');
     const text = input.value.trim();
     if (!text) return;
@@ -663,61 +667,38 @@ Keep responses short and friendly. If the user asks about pricing, say you'll ha
 
   async function handleUserInput(text) {
     addUserMessage(text);
-    conversationHistory.push({ role: 'user', content: text });
-    showTyping();
 
-    try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: SYSTEM_PROMPT,
-          messages: conversationHistory
-        })
-      });
+    if (step < steps.length) {
+      bookingData[steps[step].key] = text;
+      step++;
+    }
 
-      const data = await response.json();
-      removeTyping();
-
-      const fullText = data.content.map(b => b.text || '').join('');
-
-      // Check for booking completion
-      const bookingMatch = fullText.match(/BOOKING_COMPLETE:(\{.*\})/);
-      if (bookingMatch) {
-        const cleanText = fullText.replace(/BOOKING_COMPLETE:\{.*\}/, '').trim();
-        addBotMessage(cleanText || "Great! I've got all the details. Sending your booking now...");
-        conversationHistory.push({ role: 'assistant', content: fullText });
-
+    if (step < steps.length) {
+      showTyping();
+      setTimeout(() => { removeTyping(); askStep(); }, 700);
+    } else {
+      // All info collected — send email
+      showTyping();
+      setTimeout(async () => {
+        removeTyping();
+        addBotMessage(`Thanks ${bookingData.name}! Let me send your booking request now...`);
         try {
-          const bd = JSON.parse(bookingMatch[1]);
           await emailjs.send("service_vwqly7p", "template_wea4fpq", {
-            name: bd.name,
-            phone: bd.phone,
-            service: bd.service,
-            date: bd.date,
-            message: bd.message
+            name: bookingData.name,
+            phone: bookingData.phone,
+            service: bookingData.service,
+            date: bookingData.date,
+            message: bookingData.message
           });
           setTimeout(() => {
-            addBotMessage("✅ Your appointment request has been sent! We'll call you shortly to confirm. Thanks for choosing Krupa Plumbing!");
-            setQuickReplies(["Book another", "Talk to a human"]);
-          }, 800);
+            addBotMessage(`✅ All done! We've received your appointment request and will call you at ${bookingData.phone} to confirm. Thanks for choosing Krupa Plumbing!`);
+            document.getElementById('chat-input').disabled = true;
+            document.getElementById('chat-send').disabled = true;
+          }, 600);
         } catch(e) {
-          setTimeout(() => addBotMessage("✅ Thanks! We've received your request and will be in touch soon."), 800);
+          addBotMessage("✅ Thanks! We've got your details and will be in touch soon. You can also call us at (519) 902-1319.");
         }
-      } else {
-        addBotMessage(fullText);
-        conversationHistory.push({ role: 'assistant', content: fullText });
-
-        // Show service quick replies early in convo
-        if (conversationHistory.length === 2) {
-          setQuickReplies(["Bathroom & Kitchen", "Pipe Installation", "Drain Cleaning", "Sump-Pump Installation"]);
-        }
-      }
-    } catch(err) {
-      removeTyping();
-      addBotMessage("Sorry, something went wrong. Please call us at (519) 902-1319 to book directly!");
+      }, 1000);
     }
   }
 </script>
